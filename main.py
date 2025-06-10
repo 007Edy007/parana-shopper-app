@@ -82,6 +82,109 @@ def view_order_history(cursor, shopper_id):
             order_id, order_date, description, seller, price, qty, status
         ))
 
+# Display a numbered list of options and return the selected ID
+def _display_options(all_options, title, type):
+    option_num = 1
+    option_list = []
+    print("\n", title, "\n")
+    for option in all_options:
+        code = option[0]
+        desc = option[1]
+        print("{0}.\t{1}".format(option_num, desc))
+        option_num += 1
+        option_list.append(code)
+    selected_option = 0
+    while selected_option > len(option_list) or selected_option == 0:
+        prompt = "Enter the number against the " + type + " you want to choose: "
+        selected_option = int(input(prompt))
+    return option_list[selected_option - 1]
+
+# Add an item to the shopper's basket – Step 1: Select category
+def add_to_basket(cursor, conn, shopper_id, current_basket_id):
+    # Get all categories in alphabetical order
+    cursor.execute("""
+        SELECT category_id, category_description
+        FROM categories
+        ORDER BY category_description ASC
+    """)
+    categories = cursor.fetchall()
+
+    # Let the user choose a category
+    category_id = _display_options(categories, "Product Categories", "category")
+    # Get all available products in the selected category (alphabetical order)
+    cursor.execute("""
+        SELECT product_id, product_description
+        FROM products
+        WHERE category_id = ?
+        AND product_status = 'Available'
+        ORDER BY product_description ASC
+    """, (category_id,))
+    products = cursor.fetchall()
+
+    if not products:
+        print("No available products in this category.")
+        return
+
+    # Let the user choose a product
+    product_id = _display_options(products, "Available Products", "product")
+    # Get all sellers for the selected product with their prices
+    cursor.execute("""
+        SELECT s.seller_id, s.seller_name || ' (£' || printf('%.2f', ps.price) || ')'
+        FROM product_sellers ps
+        JOIN sellers s ON ps.seller_id = s.seller_id
+        WHERE ps.product_id = ?
+        ORDER BY s.seller_name ASC
+    """, (product_id,))
+    sellers = cursor.fetchall()
+
+    if not sellers:
+        print("This product is not currently sold by any seller.")
+        return
+
+    # Let the user choose a seller
+    seller_id = _display_options(sellers, "Sellers and Prices", "seller")
+    # Prompt user for quantity (> 0)
+    quantity = 0
+    while quantity <= 0:
+        try:
+            quantity = int(input("Enter the quantity you want to order: "))
+            if quantity <= 0:
+                print("The quantity must be greater than 0.")
+        except ValueError:
+            print("Please enter a valid number.")
+    # Get the price for the selected seller and product
+    cursor.execute("""
+        SELECT price
+        FROM product_sellers
+        WHERE product_id = ? AND seller_id = ?
+    """, (product_id, seller_id))
+    price_result = cursor.fetchone()
+
+    if not price_result:
+        print("Error: Price not found for selected product and seller.")
+        return
+
+    price = price_result[0]
+
+    # If no current basket, create one now
+    if current_basket_id is None:
+        cursor.execute("INSERT INTO shopper_baskets (shopper_id, basket_created_date_time) VALUES (?, datetime('now'))", (shopper_id,))
+        current_basket_id = cursor.lastrowid
+
+    # Insert into basket_contents
+    cursor.execute("""
+        INSERT INTO basket_contents (basket_id, product_id, seller_id, quantity, price)
+        VALUES (?, ?, ?, ?, ?)
+    """, (current_basket_id, product_id, seller_id, quantity, price))
+
+    conn.commit()
+
+    print("Item added to your basket.")
+    return current_basket_id  # So main() can track the updated basket
+
+
+
+
 
 def main():
     conn, cursor = connect_db()
@@ -106,7 +209,10 @@ def main():
             view_order_history(cursor, shopper_id)
             print("Option 1 – Order History (coming soon)")
         elif choice == '2':
-            print("Option 2 – Add Item to Basket (coming soon)")
+            # Add an item to the basket
+            updated_basket_id = add_to_basket(cursor, conn, shopper_id, current_basket_id)
+            if updated_basket_id:
+                current_basket_id = updated_basket_id  # Update if a new basket was created
         elif choice == '3':
             print("Option 3 – View Basket (coming soon)")
         elif choice == '4':
