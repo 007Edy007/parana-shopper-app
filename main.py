@@ -260,6 +260,119 @@ def change_item_quantity(cursor, conn, current_basket_id):
     print("\nQuantity updated successfully.\n")
     view_basket(cursor, current_basket_id)
 
+# Remove an item from the basket
+def remove_item_from_basket(cursor, conn, current_basket_id):
+    if current_basket_id is None:
+        print("\nYour basket is empty.")
+        return
+    # Get basket contents
+    cursor.execute("""
+        SELECT bc.product_id, bc.seller_id, p.product_description, s.seller_name, bc.quantity, bc.price
+        FROM basket_contents bc
+        JOIN products p ON bc.product_id = p.product_id
+        JOIN sellers s ON bc.seller_id = s.seller_id
+        WHERE bc.basket_id = ?
+    """, (current_basket_id,))
+    items = cursor.fetchall()
+    if not items:
+        print("\nYour basket is empty.")
+        return
+    # Display basket
+    print("\nYour Current Basket:\n")
+    print("{:<5} {:<50} {:<20} {:<8} {:<10}".format("No.", "Product", "Seller", "Qty", "Price"))
+    print("-" * 95)
+    for i, item in enumerate(items, start=1):
+        _, _, product, seller, qty, price = item
+        print("{:<5} {:<50} {:<20} {:<8} £{:<.2f}".format(i, product, seller, qty, price))
+    # Select item to remove
+    if len(items) == 1:
+        selected_index = 0
+    else:
+        while True:
+            try:
+                selected_index = int(input("\nEnter the basket item no. to remove: ")) - 1
+                if 0 <= selected_index < len(items):
+                    break
+                else:
+                    print("The basket item no. you have entered is invalid.")
+            except ValueError:
+                print("Please enter a valid number.")
+    selected_item = items[selected_index]
+    product_id = selected_item[0]
+    seller_id = selected_item[1]
+    # Confirm removal
+    confirm = input("Are you sure you want to remove this item? (Y/N): ").strip().upper()
+    if confirm != 'Y':
+        print("Item not removed.")
+        return
+    # Remove the item
+    cursor.execute("""
+        DELETE FROM basket_contents
+        WHERE basket_id = ? AND product_id = ? AND seller_id = ?
+    """, (current_basket_id, product_id, seller_id))
+    conn.commit()
+    # Check if basket is now empty
+    cursor.execute("""
+        SELECT COUNT(*) FROM basket_contents WHERE basket_id = ?
+    """, (current_basket_id,))
+    count = cursor.fetchone()[0]
+    if count == 0:
+        print("\nYour basket is now empty.")
+    else:
+        print("\nItem removed. Updated basket:\n")
+        view_basket(cursor, current_basket_id)
+# Checkout the current basket
+def checkout_basket(cursor, conn, shopper_id, current_basket_id):
+    if current_basket_id is None:
+        print("\nYour basket is empty.")
+        return
+
+    # Get basket contents
+    cursor.execute("""
+        SELECT product_id, seller_id, quantity, price
+        FROM basket_contents
+        WHERE basket_id = ?
+    """, (current_basket_id,))
+    items = cursor.fetchall()
+
+    if not items:
+        print("\nYour basket is empty.")
+        return
+
+    # Show basket first
+    print("\nYour Basket for Checkout:\n")
+    view_basket(cursor, current_basket_id)
+
+    # Confirm checkout
+    confirm = input("\nDo you wish to proceed with the checkout (Y or N)? ").strip().upper()
+    if confirm != 'Y':
+        print("Checkout cancelled.")
+        return
+    try:
+        # Start transaction
+        conn.execute('BEGIN TRANSACTION')
+        # Insert into shopper_orders
+        cursor.execute("""
+            INSERT INTO shopper_orders (shopper_id, order_date, order_status)
+            VALUES (?, DATE('now'), 'Placed')
+        """, (shopper_id,))
+        order_id = cursor.lastrowid
+        # Insert each item into ordered_products
+        for product_id, seller_id, quantity, price in items:
+            cursor.execute("""
+                INSERT INTO ordered_products (order_id, product_id, seller_id, quantity, price, ordered_product_status)
+                VALUES (?, ?, ?, ?, ?, 'Placed')
+            """, (order_id, product_id, seller_id, quantity, price))
+        # Delete from basket_contents and shopper_baskets
+        cursor.execute("DELETE FROM basket_contents WHERE basket_id = ?", (current_basket_id,))
+        cursor.execute("DELETE FROM shopper_baskets WHERE basket_id = ?", (current_basket_id,))
+        # Commit transaction
+        conn.commit()
+        print("\nCheckout complete, your order has been placed.")
+    except Exception as e:
+        conn.rollback()
+        print("Something went wrong during checkout:", e)
+
 def main():
     conn, cursor = connect_db()
 
@@ -291,11 +404,13 @@ def main():
         elif choice == '4':
             # Change quantity of an item in the basket
             change_item_quantity(cursor, conn, current_basket_id)
-
         elif choice == '5':
-            print("Option 5 – Remove Item from Basket (coming soon)")
+            # Remove item from basket
+            remove_item_from_basket(cursor, conn, current_basket_id)
         elif choice == '6':
-            print("Option 6 – Checkout (coming soon)")
+            # Checkout current basket
+            checkout_basket(cursor, conn, shopper_id, current_basket_id)
+            current_basket_id = None  # Clear basket after checkout
         elif choice == '7':
             print("Exiting... Goodbye!")
             break
