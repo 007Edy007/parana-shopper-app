@@ -409,8 +409,14 @@ def main():
             remove_item_from_basket(cursor, conn, current_basket_id)
         elif choice == '6':
             # Checkout current basket
+            before = current_basket_id
             checkout_basket(cursor, conn, shopper_id, current_basket_id)
-            current_basket_id = None  # Clear basket after checkout
+            # Confirm basket was emptied
+            cursor.execute("""
+                SELECT COUNT(*) FROM basket_contents WHERE basket_id = ?
+            """, (before,))
+            if cursor.fetchone()[0] == 0:
+                current_basket_id = None  # Only clear if basket was emptied
         elif choice == '7':
             print("Exiting... Goodbye!")
             break
