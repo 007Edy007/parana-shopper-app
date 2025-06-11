@@ -10,7 +10,6 @@ def display_menu():
     print("6. Checkout")
     print("7. Exit")
 
-
 # Prompt for a valid shopper_id
 def get_valid_shopper(cursor):
     shopper_id = input("Enter your Shopper ID: ")
@@ -20,7 +19,6 @@ def get_valid_shopper(cursor):
         WHERE shopper_id = ?
     """, (shopper_id,))
     result = cursor.fetchone()
-
     if result:
         first_name, surname = result
         print(f"\nWelcome, {first_name} {surname}!")
@@ -45,7 +43,6 @@ def get_current_basket_id(cursor, shopper_id):
     else:
         return None
 
-
 # Display order history for the logged-in shopper
 def view_order_history(cursor, shopper_id):
     cursor.execute("""
@@ -64,18 +61,14 @@ def view_order_history(cursor, shopper_id):
         WHERE o.shopper_id = ?
         ORDER BY o.order_date DESC, o.order_id;
     """, (shopper_id,))
-
     results = cursor.fetchall()
-
     if not results:
         print("\nNo orders placed by this customer.")
         return
-
     print("\n{:<10} {:<12} {:<50} {:<20} {:<10} {:<5} {:<10}".format(
         "OrderID", "Order Date", "Product Description", "Seller", "Price", "Qty", "Status"
     ))
     print("-" * 130)
-
     for row in results:
         order_id, order_date, description, seller, price, qty, status = row
         print("{:<10} {:<12} {:<50} {:<20} £{:<8.2f} {:<5} {:<10}".format(
@@ -108,7 +101,6 @@ def add_to_basket(cursor, conn, shopper_id, current_basket_id):
         ORDER BY category_description ASC
     """)
     categories = cursor.fetchall()
-
     # Let the user choose a category
     category_id = _display_options(categories, "Product Categories", "category")
     # Get all available products in the selected category (alphabetical order)
@@ -120,11 +112,9 @@ def add_to_basket(cursor, conn, shopper_id, current_basket_id):
         ORDER BY product_description ASC
     """, (category_id,))
     products = cursor.fetchall()
-
     if not products:
         print("No available products in this category.")
         return
-
     # Let the user choose a product
     product_id = _display_options(products, "Available Products", "product")
     # Get all sellers for the selected product with their prices
@@ -136,11 +126,9 @@ def add_to_basket(cursor, conn, shopper_id, current_basket_id):
         ORDER BY s.seller_name ASC
     """, (product_id,))
     sellers = cursor.fetchall()
-
     if not sellers:
         print("This product is not currently sold by any seller.")
         return
-
     # Let the user choose a seller
     seller_id = _display_options(sellers, "Sellers and Prices", "seller")
     # Prompt user for quantity (> 0)
@@ -159,32 +147,118 @@ def add_to_basket(cursor, conn, shopper_id, current_basket_id):
         WHERE product_id = ? AND seller_id = ?
     """, (product_id, seller_id))
     price_result = cursor.fetchone()
-
     if not price_result:
         print("Error: Price not found for selected product and seller.")
         return
-
     price = price_result[0]
-
     # If no current basket, create one now
     if current_basket_id is None:
         cursor.execute("INSERT INTO shopper_baskets (shopper_id, basket_created_date_time) VALUES (?, datetime('now'))", (shopper_id,))
         current_basket_id = cursor.lastrowid
-
     # Insert into basket_contents
     cursor.execute("""
         INSERT INTO basket_contents (basket_id, product_id, seller_id, quantity, price)
         VALUES (?, ?, ?, ?, ?)
     """, (current_basket_id, product_id, seller_id, quantity, price))
-
     conn.commit()
-
     print("Item added to your basket.")
     return current_basket_id  # So main() can track the updated basket
 
+# View contents of the current basket
+def view_basket(cursor, current_basket_id):
+    if current_basket_id is None:
+        print("\nYour basket is empty.")
+        return
+    # Get basket contents
+    cursor.execute("""
+        SELECT 
+            p.product_description,
+            s.seller_name,
+            bc.quantity,
+            bc.price,
+            (bc.quantity * bc.price) AS line_total
+        FROM basket_contents bc
+        JOIN products p ON bc.product_id = p.product_id
+        JOIN sellers s ON bc.seller_id = s.seller_id
+        WHERE bc.basket_id = ?
+    """, (current_basket_id,))
+    items = cursor.fetchall()
+    if not items:
+        print("\nYour basket is empty.")
+        return
+    print("\nYour Current Basket:\n")
+    print("{:<5} {:<50} {:<20} {:<8} {:<10} {:<10}".format(
+        "No.", "Product", "Seller", "Qty", "Price", "Total"
+    ))
+    print("-" * 110)
+    total = 0
+    for i, item in enumerate(items, start=1):
+        description, seller, qty, price, line_total = item
+        total += line_total
+        print("{:<5} {:<50} {:<20} {:<8} £{:<8.2f} £{:<8.2f}".format(
+            i, description, seller, qty, price, line_total
+        ))
+    print("\nTotal Basket Cost: £{:.2f}".format(total))
 
-
-
+# Change the quantity of an item in the basket
+def change_item_quantity(cursor, conn, current_basket_id):
+    if current_basket_id is None:
+        print("\nYour basket is empty.")
+        return
+    # Get basket contents
+    cursor.execute("""
+        SELECT bc.product_id, bc.seller_id, p.product_description, s.seller_name, bc.quantity, bc.price
+        FROM basket_contents bc
+        JOIN products p ON bc.product_id = p.product_id
+        JOIN sellers s ON bc.seller_id = s.seller_id
+        WHERE bc.basket_id = ?
+    """, (current_basket_id,))
+    items = cursor.fetchall()
+    if not items:
+        print("\nYour basket is empty.")
+        return
+    # Display basket items
+    print("\nYour Current Basket:\n")
+    print("{:<5} {:<50} {:<20} {:<8} {:<10}".format("No.", "Product", "Seller", "Qty", "Price"))
+    print("-" * 95)
+    for i, item in enumerate(items, start=1):
+        _, _, product, seller, qty, price = item
+        print("{:<5} {:<50} {:<20} {:<8} £{:<.2f}".format(i, product, seller, qty, price))
+    # Select item to change
+    if len(items) == 1:
+        selected_index = 0
+    else:
+        while True:
+            try:
+                selected_index = int(input("\nEnter the basket item no. to update: ")) - 1
+                if 0 <= selected_index < len(items):
+                    break
+                else:
+                    print("The basket item no. you have entered is invalid.")
+            except ValueError:
+                print("Please enter a valid number.")
+    selected_item = items[selected_index]
+    product_id = selected_item[0]
+    seller_id = selected_item[1]
+    # Prompt for new quantity
+    new_quantity = 0
+    while new_quantity <= 0:
+        try:
+            new_quantity = int(input("Enter the new quantity: "))
+            if new_quantity <= 0:
+                print("The quantity must be greater than 0.")
+        except ValueError:
+            print("Please enter a valid number.")
+    # Update quantity in basket
+    cursor.execute("""
+        UPDATE basket_contents
+        SET quantity = ?
+        WHERE basket_id = ? AND product_id = ? AND seller_id = ?
+    """, (new_quantity, current_basket_id, product_id, seller_id))
+    conn.commit()
+    # Display updated basket
+    print("\nQuantity updated successfully.\n")
+    view_basket(cursor, current_basket_id)
 
 def main():
     conn, cursor = connect_db()
@@ -199,11 +273,9 @@ def main():
     if shopper_id is None:
         close_db(conn)
         return
-
     while True:
         display_menu()
         choice = input("\nEnter your choice (1-7): ")
-
         if choice == '1':
             # Display order history
             view_order_history(cursor, shopper_id)
@@ -214,7 +286,8 @@ def main():
             if updated_basket_id:
                 current_basket_id = updated_basket_id  # Update if a new basket was created
         elif choice == '3':
-            print("Option 3 – View Basket (coming soon)")
+            # View current basket
+            view_basket(cursor, current_basket_id)
         elif choice == '4':
             print("Option 4 – Change Item Quantity (coming soon)")
         elif choice == '5':
