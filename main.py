@@ -289,7 +289,9 @@ def main():
             # View current basket
             view_basket(cursor, current_basket_id)
         elif choice == '4':
-            print("Option 4 – Change Item Quantity (coming soon)")
+            # Change quantity of an item in the basket
+            change_item_quantity(cursor, conn, current_basket_id)
+
         elif choice == '5':
             print("Option 5 – Remove Item from Basket (coming soon)")
         elif choice == '6':
